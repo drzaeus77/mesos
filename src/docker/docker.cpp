@@ -306,6 +306,23 @@ Try<Docker::Container> Docker::Container::create(const string& output)
 
   Result<JSON::String> ipAddressValue =
     json.find<JSON::String>("NetworkSettings.IPAddress");
+  if (!ipAddressValue.isSome() || ipAddressValue.get().value == "") {
+    // In docker > 1.9, ip info exists in a sub-object of NetworkSettings
+    Result<JSON::Object> networks =
+      json.find<JSON::Object>("NetworkSettings.Networks");
+    if (networks.isSome()) {
+      for (auto pair : networks.get().values) {
+        if (!pair.second.is<JSON::Object>()) {
+          continue;
+        }
+        JSON::Object network = pair.second.as<JSON::Object>();
+        ipAddressValue = network.find<JSON::String>("IPAddress");
+        if (ipAddressValue.isSome() && ipAddressValue.get().value != "") {
+          break;
+        }
+      }
+    }
+  }
   if (ipAddressValue.isNone()) {
     return Error("Unable to find NetworkSettings.IPAddress in container");
   } else if (ipAddressValue.isError()) {
@@ -462,7 +479,9 @@ Future<Nothing> Docker::run(
   string network;
   switch (dockerInfo.network()) {
     case ContainerInfo::DockerInfo::HOST: network = "host"; break;
-    case ContainerInfo::DockerInfo::BRIDGE: network = "bridge"; break;
+    //case ContainerInfo::DockerInfo::BRIDGE: network = "bridge"; break;
+    // HACK: create a proper protobuf message for custom network names
+    case ContainerInfo::DockerInfo::BRIDGE: network = "iovisor"; break;
     case ContainerInfo::DockerInfo::NONE: network = "none"; break;
     default: return Failure("Unsupported Network mode: " +
                             stringify(dockerInfo.network()));
